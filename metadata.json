@@ -1,0 +1,6 @@
+{
+  "name": "حقي (Haqqi)",
+  "description": "منصة لمساعدة ضحايا حوادث السير في الأردن على معرفة حقوقهم وتنظيم ملفات مطالباتهم.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
