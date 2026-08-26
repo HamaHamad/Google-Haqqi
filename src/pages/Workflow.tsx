@@ -1,6 +1,7 @@
 import { CheckCircle2, Circle } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../lib/utils";
+import TimelineChart from "../components/TimelineChart";
 
 const WORKFLOW_STEPS = [
   {
@@ -52,12 +53,14 @@ export default function Workflow() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div className="text-center space-y-2 mb-12">
+      <div className="text-center space-y-2 mb-10">
         <h1 className="text-3xl font-bold text-slate-900">خطوات المطالبة بعد حادث السير</h1>
         <p className="text-slate-600">قائمة مرجعية لضمان عدم ضياع حقوقك. قم بتعليم الخطوات التي أنجزتها.</p>
       </div>
 
-      <div className="relative border-r-2 border-slate-200 pr-8 space-y-12 pb-12">
+      <TimelineChart steps={WORKFLOW_STEPS} completedSteps={completedSteps} />
+
+      <div className="relative border-r-2 border-slate-200 pr-8 space-y-12 pb-12 mt-12">
         {WORKFLOW_STEPS.map((step, index) => {
           const isCompleted = completedSteps.includes(step.id);
           return (

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ShieldCheck, Activity, BookOpen, AlertCircle, BellRing, Clock, FileWarning, MessageCircle, X, Send, Bot, User, ChevronDown, Library, ClipboardList, CheckCircle2, Circle, FolderDown } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Activity, BookOpen, AlertCircle, BellRing, Clock, FileWarning, MessageCircle, X, Send, Bot, User, ChevronDown, Library, ClipboardList, CheckCircle2, Circle, FolderDown, Share2, Link as LinkIcon, Copy, Mail, Smartphone } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface ChatMessage {
@@ -40,6 +40,10 @@ const LEGAL_TERMS = [
 export default function Home() {
   const [activeTermId, setActiveTermId] = useState<number | null>(null);
   
+  // Share Modal State
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
+
   // Interactive To-Do List State
   const [tasks, setTasks] = useState([
     {
@@ -290,7 +294,7 @@ export default function Home() {
               </p>
             </div>
             
-            <div className="shrink-0 w-full md:w-auto">
+            <div className="shrink-0 w-full md:w-auto flex flex-col gap-3">
               <button 
                 className="w-full md:w-auto px-8 py-4 bg-white text-indigo-900 font-bold rounded-xl hover:bg-indigo-50 transition-colors shadow-sm flex items-center justify-center gap-3 text-lg group"
                 onClick={() => {
@@ -299,6 +303,13 @@ export default function Home() {
               >
                 تصدير الملف الآن
                 <FolderDown className="w-5 h-5 text-indigo-500 group-hover:-translate-y-1 transition-transform" />
+              </button>
+              <button 
+                className="w-full md:w-auto px-8 py-3 bg-indigo-800 text-indigo-100 font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm flex items-center justify-center gap-3 border border-indigo-700/50"
+                onClick={() => setIsShareModalOpen(true)}
+              >
+                مشاركة الملف بأمان
+                <Share2 className="w-4 h-4 text-indigo-300" />
               </button>
             </div>
           </div>
@@ -395,7 +406,7 @@ export default function Home() {
       </section>
 
       {/* Floating Chatbot Widget */}
-      <div className="fixed bottom-6 left-6 z-50 flex flex-col items-end">
+      <div className="fixed bottom-[5.5rem] md:bottom-6 left-4 md:left-6 z-50 flex flex-col items-end">
         {isChatOpen && (
           <div className="bg-white border border-slate-200 shadow-xl rounded-2xl w-[350px] max-w-[calc(100vw-3rem)] h-[450px] max-h-[calc(100vh-8rem)] flex flex-col mb-4 overflow-hidden animate-in fade-in slide-in-from-bottom-4">
             {/* Chat Header */}
@@ -479,6 +490,71 @@ export default function Home() {
           {isChatOpen ? <X className="w-6 h-6" /> : <MessageCircle className="w-6 h-6" />}
         </button>
       </div>
+
+      {/* Share Modal */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-lg text-slate-900">مشاركة الملف بأمان</h3>
+              </div>
+              <button onClick={() => setIsShareModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <p className="text-slate-600 text-sm leading-relaxed">
+                تم إنشاء رابط آمن ومشفر لملف قضيتك الشامل. يمكنك إرساله مباشرة إلى محاميك أو الجهات المختصة للاطلاع عليه.
+              </p>
+
+              <div className="flex items-center gap-2 p-1.5 border border-slate-200 rounded-xl bg-slate-50">
+                <div className="p-2 text-slate-400 bg-white rounded-lg border border-slate-100 shadow-sm">
+                  <LinkIcon className="w-4 h-4" />
+                </div>
+                <input 
+                  readOnly 
+                  value="https://haqqi.jo/secure/doc/a8x9f2" 
+                  className="flex-1 bg-transparent text-sm text-slate-600 focus:outline-none" dir="ltr" 
+                />
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText("https://haqqi.jo/secure/doc/a8x9f2");
+                    setIsLinkCopied(true);
+                    setTimeout(() => setIsLinkCopied(false), 2000);
+                  }}
+                  className={cn("px-3 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5", isLinkCopied ? "bg-emerald-100 text-emerald-700" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")}
+                >
+                  {isLinkCopied ? <><CheckCircle2 className="w-4 h-4" /> تم النسخ</> : <><Copy className="w-4 h-4" /> نسخ</>}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <a 
+                  href="https://wa.me/?text=مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: https://haqqi.jo/secure/doc/a8x9f2" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                >
+                  <Smartphone className="w-6 h-6" />
+                  <span className="font-bold text-sm">واتساب</span>
+                </a>
+                <a 
+                  href="mailto:?subject=ملف القضية الشامل&body=مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: https://haqqi.jo/secure/doc/a8x9f2" 
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                >
+                  <Mail className="w-6 h-6" />
+                  <span className="font-bold text-sm">البريد الإلكتروني</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

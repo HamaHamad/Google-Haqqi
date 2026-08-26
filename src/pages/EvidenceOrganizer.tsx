@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Folder, UploadCloud, FileText, Camera, Stethoscope, Plus, Clock, Download, CheckCircle2, Search, ShieldCheck, Lock, HardDrive, Cloud, X } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Folder, UploadCloud, FileText, Camera, Stethoscope, Plus, Clock, Download, CheckCircle2, Search, ShieldCheck, Lock, HardDrive, Cloud, X, Scan, Check } from "lucide-react";
 import { cn } from "../lib/utils";
 
 const MOCK_DOCUMENTS = [
@@ -63,6 +63,54 @@ export default function EvidenceOrganizer() {
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(false);
+  
+  // Scanner States
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanSuccess, setScanSuccess] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
+
+  // Initialize camera when scanner opens
+  useEffect(() => {
+    if (isScannerOpen) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(stream => {
+          setMediaStream(stream);
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        })
+        .catch(err => {
+          console.error("Camera access denied or unavailable", err);
+        });
+    } else {
+      // Cleanup stream
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        setMediaStream(null);
+      }
+      setScanSuccess(false);
+      setIsScanning(false);
+    }
+    
+    return () => {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isScannerOpen]);
+
+  const handleCapture = () => {
+    setIsScanning(true);
+    setTimeout(() => {
+      setIsScanning(false);
+      setScanSuccess(true);
+      setTimeout(() => {
+        setIsScannerOpen(false);
+      }, 2000);
+    }, 1500);
+  };
 
   const handleExportPdf = () => {
     setIsExporting(true);
@@ -131,9 +179,16 @@ export default function EvidenceOrganizer() {
               </span>
             )}
           </button>
+          <button 
+            onClick={() => setIsScannerOpen(true)}
+            className="flex-1 md:flex-none flex items-center justify-center px-4 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            <Scan className="w-5 h-5 ml-2" />
+            مسح ضوئي
+          </button>
           <button className="flex-1 md:flex-none flex items-center justify-center px-6 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors">
             <UploadCloud className="w-5 h-5 ml-2" />
-            رفع ملف جديد
+            رفع ملف
           </button>
         </div>
       </div>
@@ -340,6 +395,102 @@ export default function EvidenceOrganizer() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scanner Modal */}
+      {isScannerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4">
+          <style dangerouslySetInnerHTML={{__html: `
+            @keyframes scanline {
+              0% { top: 0; }
+              50% { top: 100%; }
+              100% { top: 0; }
+            }
+          `}} />
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
+                  <Scan className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-lg text-slate-900">المسح الضوئي الذكي</h3>
+              </div>
+              <button onClick={() => setIsScannerOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 flex flex-col items-center justify-center space-y-6">
+              {!scanSuccess ? (
+                <>
+                  <div className="relative w-full aspect-[3/4] max-h-[50vh] bg-slate-900 rounded-xl overflow-hidden shadow-inner border border-slate-200">
+                    {/* Scanner Guide Overlay */}
+                    <div className="absolute inset-4 border-2 border-dashed border-white/40 rounded-lg z-10 pointer-events-none">
+                      <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-emerald-400 rounded-tl-lg -translate-x-1.5 -translate-y-1.5"></div>
+                      <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-emerald-400 rounded-tr-lg translate-x-1.5 -translate-y-1.5"></div>
+                      <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-emerald-400 rounded-bl-lg -translate-x-1.5 translate-y-1.5"></div>
+                      <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-emerald-400 rounded-br-lg translate-x-1.5 translate-y-1.5"></div>
+                    </div>
+                    
+                    {/* Scanning Animation */}
+                    {isScanning && (
+                      <div className="absolute inset-0 bg-emerald-500/10 z-20">
+                        <div className="absolute left-0 right-0 h-1 bg-emerald-400 shadow-[0_0_15px_3px_rgba(52,211,153,0.5)] z-20" style={{ animation: 'scanline 2s linear infinite' }} />
+                      </div>
+                    )}
+                    
+                    <video 
+                      ref={videoRef} 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      className="w-full h-full object-cover"
+                    ></video>
+                    
+                    {!mediaStream && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-3 z-0 bg-slate-800">
+                        <Camera className="w-10 h-10 opacity-50 animate-pulse" />
+                        <span className="text-sm font-medium">جاري تشغيل الكاميرا...</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <p className="text-slate-500 text-sm text-center">
+                    قم بتوجيه الكاميرا نحو المستند (تقرير طبي، كروكا، إلخ). سيتم التقاط الصورة وتحويلها لملف PDF عالي الدقة.
+                  </p>
+                  
+                  <button 
+                    onClick={handleCapture}
+                    disabled={!mediaStream || isScanning}
+                    className="w-full sm:w-auto px-8 py-4 bg-indigo-600 text-white font-bold rounded-full hover:bg-indigo-700 transition-colors shadow-lg disabled:opacity-70 flex items-center justify-center gap-2"
+                  >
+                    {isScanning ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        جاري معالجة وتحسين المستند...
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-5 h-5" />
+                        التقاط المستند
+                      </>
+                    )}
+                  </button>
+                </>
+              ) : (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-4 animate-in zoom-in duration-500">
+                  <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-2">
+                    <Check className="w-10 h-10" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-slate-900">تم المسح بنجاح!</h3>
+                  <p className="text-slate-600 max-w-xs">
+                    تم تحسين المستند وتحويله إلى صيغة PDF وإضافته إلى ملفات قضيتك المنظمة.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
