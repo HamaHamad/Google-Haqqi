@@ -52,8 +52,9 @@ export default function Layout() {
               </Link>
             </div>
             
-            {/* Desktop Nav */}
-            <nav className="hidden md:flex space-x-8 space-x-reverse">
+            {/* Desktop Nav — xl+ only: 9 items need >=1280px to fit on one line;
+                below xl the drawer (hamburger) is used instead to prevent label wrap/overlap */}
+            <nav className="hidden xl:flex space-x-3 space-x-reverse 2xl:space-x-5">
               {navigation.filter(item => item.desktop !== false).map((item) => {
                 const isActive = location.pathname === item.href;
                 return (
@@ -61,23 +62,24 @@ export default function Layout() {
                     key={item.name}
                     to={item.href}
                     className={cn(
-                      "inline-flex items-center px-1 h-16 border-b-2 text-sm font-medium transition-colors",
+                      "inline-flex items-center whitespace-nowrap px-0.5 h-16 border-b-2 text-sm font-medium transition-colors",
                       isActive 
                         ? "border-emerald-500 text-emerald-600" 
                         : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
                     )}
                   >
-                    <item.icon className="w-4 h-4 ml-2" />
+                    <item.icon className="w-4 h-4 ml-2 shrink-0" />
                     {item.name}
                   </Link>
                 );
               })}
             </nav>
 
-            <div className="flex items-center md:hidden">
+            <div className="flex items-center xl:hidden">
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                 className="text-slate-500 hover:text-emerald-600 p-2 -mr-2"
+                aria-label="فتح القائمة"
               >
                 <Menu className="w-7 h-7" />
               </button>
@@ -90,7 +92,7 @@ export default function Layout() {
       {/* Backdrop */}
       {isMobileMenuOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/50 z-[55] md:hidden backdrop-blur-sm transition-opacity"
+          className="fixed inset-0 bg-slate-900/50 z-[55] xl:hidden backdrop-blur-sm transition-opacity"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
@@ -98,7 +100,7 @@ export default function Layout() {
       {/* Drawer */}
       <div 
         className={cn(
-          "fixed top-0 bottom-0 h-full right-0 z-[60] w-64 max-w-[80vw] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out md:hidden flex flex-col",
+          "fixed top-0 bottom-0 h-full right-0 z-[60] w-64 max-w-[80vw] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out xl:hidden flex flex-col",
           isMobileMenuOpen ? "translate-x-0" : "translate-x-full"
         )}
       >
