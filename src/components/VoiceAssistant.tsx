@@ -67,7 +67,11 @@ export default function VoiceAssistant() {
     
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // recognition layer not started — nothing to stop
+        }
       }
     };
   }, [navigate]);
@@ -87,12 +91,11 @@ export default function VoiceAssistant() {
     else if (lowerText.includes('اجتهاد') || lowerText.includes('محكم')) { navigate('/precedents'); setFeedback('جاري الانتقال إلى الاجتهادات...'); handled = true; }
     else if (lowerText.includes('جهات') || lowerText.includes('عناوين') || lowerText.includes('دليل')) { navigate('/directory'); setFeedback('جاري الانتقال إلى دليل الجهات...'); handled = true; }
     else {
-      // If no navigation command is found, save as a note
-      setNotes(prev => {
-        const newNotes = [text, ...prev];
-        localStorage.setItem('haqqi_voice_notes', JSON.stringify(newNotes));
-        return newNotes;
-      });
+      // If no navigation command is found, save as a note.
+      // Persist outside the state updater (updaters must stay pure — StrictMode double-invokes them)
+      const newNotes = [text, ...notes];
+      setNotes(newNotes);
+      localStorage.setItem('haqqi_voice_notes', JSON.stringify(newNotes));
       setFeedback('تم حفظ الملاحظة بنجاح.');
       handled = true;
     }

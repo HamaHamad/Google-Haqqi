@@ -1,1 +1,16 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* Custom utilities used across the app (Tailwind v4 @utility syntax) */
+@utility hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Safe-area padding for the mobile bottom navigation (iPhone home indicator) */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

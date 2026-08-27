@@ -1,10 +1,14 @@
-import { Phone, Mail, Globe, Download, Copy, FileText, Send, CheckCircle2 } from "lucide-react";
-import React, { useState } from "react";
+import { Phone, Mail, Globe, Download, Copy, FileText, Send, CheckCircle2, Loader2 } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { api } from "../lib/api";
+import { createHiddenContainer, exportElementToPdf } from "../lib/pdf";
 
 export default function Complaints() {
   const [copied, setCopied] = useState(false);
   const [contactForm, setContactForm] = useState({ name: "", contact: "", message: "" });
-  const [formStatus, setFormStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
+  const [formStatus, setFormStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const templateRef = useRef<HTMLDivElement | null>(null);
 
   const cbjComplaintTemplate = `بسم الله الرحمن الرحيم
 السادة/ دائرة حماية المستهلك المالي - البنك المركزي الأردني المحترمين،
@@ -28,14 +32,34 @@ export default function Complaints() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSubmitContact = (e: React.FormEvent) => {
+  const handleSubmitContact = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormStatus('submitting');
-    setTimeout(() => {
+    try {
+      // Real submission — stored server-side for the support team
+      await api("/api/contact", { json: contactForm });
       setFormStatus('success');
       setContactForm({ name: "", contact: "", message: "" });
       setTimeout(() => setFormStatus('idle'), 3000);
-    }, 1000);
+    } catch (error) {
+      console.error("Contact submit failed:", error);
+      setFormStatus('error');
+      setTimeout(() => setFormStatus('idle'), 4000);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    const el = templateRef.current;
+    if (!el) return;
+    setIsPdfLoading(true);
+    try {
+      await exportElementToPdf(el, "haqqi-cbj-complaint.pdf");
+    } catch (error) {
+      console.error("PDF download failed:", error);
+      alert("تعذر تحميل ملف PDF. يرجى المحاولة مرة أخرى.");
+    } finally {
+      setIsPdfLoading(false);
+    }
   };
 
   return (
@@ -93,7 +117,7 @@ export default function Complaints() {
             يمكنك نسخ هذا النموذج، تعبئة بياناتك، وإرساله عبر الإيميل أو البوابة الإلكترونية.
           </p>
           
-          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 font-mono text-sm whitespace-pre-wrap flex-grow overflow-auto">
+          <div ref={templateRef} className="bg-white p-4 rounded-lg border border-slate-200 font-mono text-sm whitespace-pre-wrap flex-grow overflow-auto">
             {cbjComplaintTemplate}
           </div>
 
@@ -105,8 +129,12 @@ export default function Complaints() {
               {copied ? <CheckIcon className="w-4 h-4 ml-2" /> : <Copy className="w-4 h-4 ml-2" />}
               {copied ? 'تم النسخ' : 'نسخ النص'}
             </button>
-            <button className="flex items-center justify-center flex-1 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">
-              <Download className="w-4 h-4 ml-2" />
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isPdfLoading}
+              className="flex items-center justify-center flex-1 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-70"
+            >
+              {isPdfLoading ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Download className="w-4 h-4 ml-2" />}
               تحميل PDF
             </button>
           </div>
@@ -158,16 +186,18 @@ export default function Complaints() {
 
             <button
               type="submit"
-              disabled={formStatus !== 'idle'}
+              disabled={formStatus === 'submitting' || formStatus === 'success'}
               className="w-full flex items-center justify-center px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-70"
             >
               {formStatus === 'submitting' ? (
-                <span>جاري الإرسال...</span>
+                <span className="flex items-center"><Loader2 className="w-5 h-5 ml-2 animate-spin" /> جاري الإرسال...</span>
               ) : formStatus === 'success' ? (
                 <>
                   <CheckCircle2 className="w-5 h-5 ml-2" />
                   تم إرسال استفسارك بنجاح
                 </>
+              ) : formStatus === 'error' ? (
+                <span>تعذر الإرسال — حاول مرة أخرى</span>
               ) : (
                 <>
                   <Send className="w-5 h-5 ml-2" />

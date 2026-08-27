@@ -1,39 +1,47 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Calculator, Landmark, Receipt, Scale, AlertCircle, Info, PiggyBank, FileSignature } from "lucide-react";
 import { cn } from "../lib/utils";
+import {
+  calculateCourtFee,
+  calculateExpertFee,
+  calculateInitialCosts,
+  calculateLawyerFeeRange,
+  courtTypeForAmount,
+  STAMPS_FEE,
+  type CourtType,
+} from "../lib/costs";
+import { loadJSON, saveJSON } from "../lib/storage";
 
 export default function CostsEstimator() {
-  const [amount, setAmount] = useState<number>(5000);
-  const [courtType, setCourtType] = useState<'solh' | 'bidaya' | 'appeal'>('solh');
+  const [amount, setAmount] = useState<number>(() => loadJSON<number>("haqqi_costs_amount", 5000));
+  const [courtType, setCourtType] = useState<CourtType>(() => loadJSON<CourtType>("haqqi_costs_court", "solh"));
 
   // Auto-update court type based on amount (Jordanian law: <= 10000 is Solh, > 10000 is Bidaya)
   useEffect(() => {
-    if (courtType !== 'appeal') {
-      if (amount <= 10000) {
-        setCourtType('solh');
-      } else {
-        setCourtType('bidaya');
-      }
+    if (courtType !== "appeal") {
+      const auto = courtTypeForAmount(amount);
+      if (auto !== courtType) setCourtType(auto);
     }
-  }, [amount, courtType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amount]);
 
-  // Calculations
-  // Court fees: usually ~3% of the claim amount (simplified for estimation)
-  const courtFeeRate = courtType === 'appeal' ? 0.015 : 0.03; // Appeal is often half of first instance
-  const calculatedCourtFee = Math.min(Math.max(amount * courtFeeRate, 20), 1200); // capped roughly at 1200 JOD
-  
-  // Expert fees: medical and traffic experts
-  const expertFee = courtType === 'solh' ? 150 : courtType === 'bidaya' ? 250 : 0; 
-  
-  // Stamps and power of attorney fees
-  const stampsFee = 20;
+  // Persist inputs
+  useEffect(() => {
+    saveJSON("haqqi_costs_amount", amount);
+  }, [amount]);
+  useEffect(() => {
+    saveJSON("haqqi_costs_court", courtType);
+  }, [courtType]);
 
-  // Total initial costs (excluding lawyer)
-  const initialCosts = calculatedCourtFee + expertFee + stampsFee;
+  // Guard against NaN / negative typed input
+  const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
 
-  // Lawyer fees (Contingency/Agreement is usually 10-25%)
-  const lawyerFeeMin = amount * 0.10;
-  const lawyerFeeMax = amount * 0.20;
+  // Calculations (pure functions, unit tested in tests/costs.test.ts)
+  const calculatedCourtFee = calculateCourtFee(safeAmount, courtType);
+  const expertFee = calculateExpertFee(courtType);
+  const stampsFee = STAMPS_FEE;
+  const initialCosts = calculateInitialCosts(safeAmount, courtType);
+  const { min: lawyerFeeMin, max: lawyerFeeMax } = calculateLawyerFeeRange(safeAmount);
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-500 pb-12">
@@ -60,8 +68,8 @@ export default function CostsEstimator() {
               <div className="relative">
                 <input
                   type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
+                  value={Number.isFinite(amount) ? amount : ""}
+                  onChange={(e) => setAmount(e.target.value === "" ? 0 : Number(e.target.value))}
                   className="w-full text-2xl font-bold text-slate-900 py-3 pl-14 pr-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                   min="0"
                   step="500"
@@ -73,7 +81,7 @@ export default function CostsEstimator() {
                 min="500" 
                 max="50000" 
                 step="500"
-                value={amount}
+                value={Math.max(safeAmount, 500)}
                 onChange={(e) => setAmount(Number(e.target.value))}
                 className="w-full accent-emerald-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
               />

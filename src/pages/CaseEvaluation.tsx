@@ -1,60 +1,45 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, ShieldCheck, AlertCircle, FileText, Camera, Users, Car, Stethoscope, CheckCircle2, XCircle, Info, BarChart2 } from "lucide-react";
 import { cn } from "../lib/utils";
-
-type Answer = 'yes' | 'no' | null;
+import { calculateScore, getScoreDetails, isEvaluationComplete, type EvaluationAnswers } from "../lib/evaluation";
+import { loadJSON, saveJSON } from "../lib/storage";
 
 export default function CaseEvaluation() {
-  const [answers, setAnswers] = useState<{
-    kroka: Answer;
-    insurance: Answer;
-    medical: 'yes' | 'no' | 'na' | null;
-    photos: Answer;
-    witnesses: Answer;
-  }>({
-    kroka: null,
-    insurance: null,
-    medical: null,
-    photos: null,
-    witnesses: null,
-  });
+  const [answers, setAnswers] = useState<EvaluationAnswers>(() =>
+    loadJSON<EvaluationAnswers>("haqqi_evaluation_answers", {
+      kroka: null,
+      insurance: null,
+      medical: null,
+      photos: null,
+      witnesses: null,
+    })
+  );
 
-  const [showResult, setShowResult] = useState(false);
+  const [showResult, setShowResult] = useState(() => loadJSON<boolean>("haqqi_evaluation_shown", false));
 
-  const calculateScore = () => {
-    let score = 0;
-    let maxScore = 100;
+  // Persist answers + result so the evaluation survives refreshes
+  useEffect(() => {
+    saveJSON("haqqi_evaluation_answers", answers);
+  }, [answers]);
+  useEffect(() => {
+    saveJSON("haqqi_evaluation_shown", showResult);
+  }, [showResult]);
 
-    if (answers.kroka === 'yes') score += 40;
-    if (answers.insurance === 'yes') score += 20;
-    
-    if (answers.medical === 'yes') {
-      score += 20;
-    } else if (answers.medical === 'na') {
-      // Adjust max score if medical is not applicable
-      maxScore -= 20;
+  // Persist the computed result for the case dossier
+  useEffect(() => {
+    if (showResult && isEvaluationComplete(answers)) {
+      const score = calculateScore(answers);
+      saveJSON("haqqi_evaluation", {
+        answers,
+        score,
+        label: getScoreDetails(score).label,
+        description: getScoreDetails(score).desc,
+      });
     }
-
-    if (answers.photos === 'yes') score += 10;
-    if (answers.witnesses === 'yes') score += 10;
-
-    return Math.round((score / maxScore) * 100);
-  };
-
-  const getScoreDetails = (score: number) => {
-    if (score >= 80) return { label: "قوية جداً", color: "text-emerald-600", bg: "bg-emerald-500", border: "border-emerald-200", desc: "فرص نجاح المطالبة والحصول على التعويض عالية جداً. أدلتك مكتملة." };
-    if (score >= 50) return { label: "متوسطة", color: "text-amber-500", bg: "bg-amber-500", border: "border-amber-200", desc: "القضية جيدة ولكن قد تواجه بعض التحديات أو تأخيرات في التفاوض بسبب نقص بعض الأدلة." };
-    return { label: "ضعيفة", color: "text-rose-500", bg: "bg-rose-500", border: "border-rose-200", desc: "فرص النجاح منخفضة حالياً. ينقصك أدلة جوهرية (مثل الكروكا أو التعرف على المتسبب) مما يصعب المطالبة." };
-  };
+  }, [answers, showResult]);
 
   const handleEvaluate = () => {
-    if (
-      answers.kroka !== null &&
-      answers.insurance !== null &&
-      answers.medical !== null &&
-      answers.photos !== null &&
-      answers.witnesses !== null
-    ) {
+    if (isEvaluationComplete(answers)) {
       setShowResult(true);
       // Scroll to result smoothly
       setTimeout(() => {
@@ -65,7 +50,7 @@ export default function CaseEvaluation() {
     }
   };
 
-  const score = calculateScore();
+  const score = calculateScore(answers);
   const resultDetails = getScoreDetails(score);
 
   return (

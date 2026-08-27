@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Scale, Activity, ShieldAlert, BookOpen, Menu, X, Globe, Gavel, BarChart2, Calculator } from "lucide-react";
+import { Scale, Activity, ShieldAlert, BookOpen, Menu, X, Globe, Gavel, BarChart2, Calculator, MessageSquare } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import VoiceAssistant from "./VoiceAssistant";
@@ -14,15 +14,19 @@ export default function Layout() {
   }, [location.pathname]);
 
   const navigation = [
-    { name: "الرئيسية", nameEn: "Home", href: "/", icon: Scale },
-    { name: "المساعد الذكي", nameEn: "AI Intake", href: "/ai-intake", icon: Globe },
-    { name: "مسار القضية", nameEn: "Timeline", href: "/workflow", icon: Activity },
-    { name: "تقييم القضية", nameEn: "Evaluation", href: "/evaluation", icon: BarChart2 },
-    { name: "حاسبة الرسوم", nameEn: "Costs Estimator", href: "/costs-estimator", icon: Calculator },
-    { name: "منظم الأدلة", nameEn: "Evidence", href: "/evidence", icon: BookOpen },
-    { name: "الصياغة القانونية", nameEn: "Drafting", href: "/drafting", icon: Scale },
-    { name: "الاجتهادات القضائية", nameEn: "Precedents", href: "/precedents", icon: Gavel },
-    { name: "دليل الجهات", nameEn: "Directory", href: "/directory", icon: BookOpen },
+    { name: "الرئيسية", nameEn: "Home", href: "/", icon: Scale, desktop: true },
+    { name: "المساعد الذكي", nameEn: "AI Intake", href: "/ai-intake", icon: Globe, desktop: true },
+    { name: "مسار القضية", nameEn: "Timeline", href: "/workflow", icon: Activity, desktop: true },
+    { name: "تقييم القضية", nameEn: "Evaluation", href: "/evaluation", icon: BarChart2, desktop: true },
+    { name: "حاسبة الرسوم", nameEn: "Costs Estimator", href: "/costs-estimator", icon: Calculator, desktop: true },
+    { name: "منظم الأدلة", nameEn: "Evidence", href: "/evidence", icon: BookOpen, desktop: true },
+    { name: "الصياغة القانونية", nameEn: "Drafting", href: "/drafting", icon: Scale, desktop: true },
+    { name: "الاجتهادات القضائية", nameEn: "Precedents", href: "/precedents", icon: Gavel, desktop: true },
+    { name: "دليل الجهات", nameEn: "Directory", href: "/directory", icon: BookOpen, desktop: true },
+    // Secondary tools: shown in the mobile drawer; on desktop only on very wide screens (xl+)
+    // to avoid crowding the existing header layout.
+    { name: "دليل الشكاوى", nameEn: "Complaints", href: "/complaints", icon: ShieldAlert, desktop: false },
+    { name: "تجارب وتحذيرات", nameEn: "Stories", href: "/stories", icon: MessageSquare, desktop: false },
   ];
 
   // Mobile Bottom Navigation Tabs
@@ -50,7 +54,7 @@ export default function Layout() {
             
             {/* Desktop Nav */}
             <nav className="hidden md:flex space-x-8 space-x-reverse">
-              {navigation.map((item) => {
+              {navigation.filter(item => item.desktop !== false).map((item) => {
                 const isActive = location.pathname === item.href;
                 return (
                   <Link

@@ -1,55 +1,81 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import type { ChangeEvent } from "react";
 import { Folder, UploadCloud, FileText, Camera, Stethoscope, Plus, Clock, Download, CheckCircle2, Search, ShieldCheck, Lock, HardDrive, Cloud, X, Scan, Check } from "lucide-react";
 import { cn } from "../lib/utils";
+import { api, uploadFile, downloadFromApi } from "../lib/api";
+import { getCaseId, getCasePayload } from "../lib/caseStore";
+import { loadJSON, saveJSON } from "../lib/storage";
+import { buildDossierHtml, exportMarkupToPdf } from "../lib/pdf";
+
+interface EvidenceFile {
+  id: string;
+  filename: string;
+  originalname: string;
+  mimetype: string;
+  size: number;
+  category: string;
+  uploadedAt: string;
+}
+
+interface LogEvent {
+  id: string;
+  title: string;
+  date: string;
+  description: string;
+  flag?: boolean;
+}
+
+const DOC_CATEGORIES = [
+  { id: "kroka", accept: "application/pdf,image/*", hint: "PDF أو صور" },
+  { id: "medical", accept: "application/pdf,image/*", hint: "PDF أو صور" },
+  { id: "photos", accept: "image/*", hint: "صور" },
+  { id: "ids", accept: "application/pdf,image/*", hint: "PDF أو صور" },
+] as const;
 
 const MOCK_DOCUMENTS = [
   {
     id: 1,
+    category: 'kroka',
     title: 'مخطط الكروكا وتقرير الشرطة',
-    status: 'لم يتم الرفع بعد',
     icon: FileText,
     colorClasses: {
       bg: 'bg-blue-50',
       textIcon: 'text-blue-500',
       textAction: 'text-blue-600'
-    },
-    actionText: 'إضافة ملف'
+    }
   },
   {
     id: 2,
+    category: 'medical',
     title: 'التقارير والفواتير الطبية',
-    status: 'تم رفع 3 ملفات',
     icon: Stethoscope,
     colorClasses: {
       bg: 'bg-emerald-50',
       textIcon: 'text-emerald-500',
       textAction: 'text-emerald-600'
-    },
-    actionText: 'عرض وإضافة'
+    }
   },
   {
     id: 3,
+    category: 'photos',
     title: 'صور موقع الحادث والأضرار',
-    status: 'لم يتم الرفع بعد',
     icon: Camera,
     colorClasses: {
       bg: 'bg-amber-50',
       textIcon: 'text-amber-500',
       textAction: 'text-amber-600'
-    },
-    actionText: 'إضافة ملف'
+    }
   },
   {
     id: 4,
+    category: 'ids',
     title: 'هوية الأحوال المدنية / رخصة القيادة',
-    status: 'مطلوب للمطالبة',
     icon: Folder,
     colorClasses: {
       bg: 'bg-slate-50',
       textIcon: 'text-slate-500',
       textAction: 'text-slate-600'
-    },
-    actionText: 'إضافة ملف'
+    }
   }
 ];
 
@@ -58,53 +84,128 @@ export default function EvidenceOrganizer() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  
+  // Real evidence files from the server
+  const [files, setFiles] = useState<EvidenceFile[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingCategoryRef = useRef<string>('misc');
+
+  const refreshFiles = useCallback(async () => {
+    try {
+      const res = await api<{ files: EvidenceFile[] }>("/api/evidence/files");
+      setFiles(res.files || []);
+    } catch {
+      // server unavailable — keep current list
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshFiles();
+  }, [refreshFiles]);
   
   // Backup & Security States
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
-  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [driveNote, setDriveNote] = useState<string | null>(null);
+  
+  // Communication Log States (persisted locally)
+  const [logEvents, setLogEvents] = useState<LogEvent[]>(() => loadJSON<LogEvent[]>("haqqi_log_events", []));
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [newEvent, setNewEvent] = useState({ title: "", date: new Date().toISOString().slice(0, 10), description: "", flag: false });
+
+  useEffect(() => {
+    saveJSON("haqqi_log_events", logEvents);
+  }, [logEvents]);
+
+  const addLogEvent = () => {
+    if (!newEvent.title.trim() || !newEvent.description.trim()) return;
+    setLogEvents(prev => [{ id: `${Date.now()}`, ...newEvent }, ...prev]);
+    setNewEvent({ title: "", date: new Date().toISOString().slice(0, 10), description: "", flag: false });
+    setShowEventForm(false);
+  };
+
+  const removeLogEvent = (id: string) => {
+    setLogEvents(prev => prev.filter(e => e.id !== id));
+  };
   
   // Scanner States
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanSuccess, setScanSuccess] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
 
-  // Initialize camera when scanner opens
+  const stopStream = useCallback(() => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setMediaStream(null);
+  }, []);
+
+  // Initialize camera when scanner opens (with leak-free cleanup)
   useEffect(() => {
-    if (isScannerOpen) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(stream => {
-          setMediaStream(stream);
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-        })
-        .catch(err => {
-          console.error("Camera access denied or unavailable", err);
-        });
-    } else {
-      // Cleanup stream
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-        setMediaStream(null);
-      }
+    if (!isScannerOpen) {
+      stopStream();
       setScanSuccess(false);
       setIsScanning(false);
+      return;
     }
-    
+    let cancelled = false;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => {
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        mediaStreamRef.current = stream;
+        setMediaStream(stream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      })
+      .catch(err => {
+        console.error("Camera access denied or unavailable", err);
+      });
     return () => {
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-      }
+      cancelled = true;
+      stopStream();
     };
-  }, [isScannerOpen]);
+  }, [isScannerOpen, stopStream]);
 
   const handleCapture = () => {
     setIsScanning(true);
-    setTimeout(() => {
+    // Capture the real video frame at the moment the user presses the button
+    const video = videoRef.current;
+    let dataUrl: string | null = null;
+    if (video && mediaStreamRef.current && video.videoWidth > 0) {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d")?.drawImage(video, 0, 0);
+      dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    }
+    setTimeout(async () => {
       setIsScanning(false);
+      if (dataUrl) {
+        try {
+          await api("/api/evidence/upload-base64", {
+            json: {
+              base64: dataUrl,
+              filename: `مستند ممسوح-${new Date().toISOString().slice(0, 10)}.jpg`,
+              category: "scanned",
+              caseId: getCaseId(),
+            },
+          });
+          await refreshFiles();
+        } catch (error) {
+          console.error("Scan upload failed:", error);
+          setUploadError("تم التقاط الصورة لكن تعذر حفظها على الخادم. حاول مرة أخرى.");
+        }
+      }
       setScanSuccess(true);
       setTimeout(() => {
         setIsScannerOpen(false);
@@ -112,35 +213,100 @@ export default function EvidenceOrganizer() {
     }, 1500);
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     setIsExporting(true);
-    // Simulate PDF generation delay
-    setTimeout(() => {
-      setIsExporting(false);
+    try {
+      const payload = {
+        ...getCasePayload(),
+        evidenceFiles: files.map(f => ({ originalname: f.originalname, uploadedAt: f.uploadedAt, category: f.category })),
+      };
+      await exportMarkupToPdf(buildDossierHtml(payload), `haqqi-evidence-${getCaseId()}.pdf`);
       setExportSuccess(true);
       setTimeout(() => setExportSuccess(false), 3000);
-    }, 1500);
+    } catch (error) {
+      console.error("Evidence PDF export failed:", error);
+      alert("تعذر إنشاء ملف PDF. يرجى المحاولة مرة أخرى.");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
-  const handleDownloadBackup = () => {
+  const handleDownloadBackup = async () => {
     setIsDownloadingBackup(true);
-    setTimeout(() => {
+    try {
+      await downloadFromApi(
+        "/api/export/backup",
+        { caseId: getCaseId(), payload: getCasePayload() },
+        `haqqi-backup-${getCaseId()}.json`
+      );
+    } catch (error) {
+      console.error("Backup failed:", error);
+      alert("تعذر تجهيز النسخة الاحتياطية. يرجى المحاولة مرة أخرى.");
+    } finally {
       setIsDownloadingBackup(false);
-      // Simulate file download
-      const element = document.createElement("a");
-      const file = new Blob(["{ \"encrypted\": true, \"data\": \"encrypted_blob_data_here\" }"], {type: 'application/json'});
-      element.href = URL.createObjectURL(file);
-      element.download = "haqqi-backup.haqqi";
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
-    }, 1500);
+    }
   };
 
-  const filteredDocuments = MOCK_DOCUMENTS.filter(doc => 
-    doc.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    doc.status.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const handleDriveToggle = async () => {
+    // Honest integration status: check server configuration instead of faking success
+    setDriveNote(null);
+    try {
+      const status = await api<{ configured: boolean }>("/api/integrations/drive/status");
+      if (!status.configured) {
+        setDriveNote("ميزة المزامنة مع Google Drive تتطلب ربط حساب Google من مسؤول المنصة (GOOGLE_DRIVE_CLIENT_ID/SECRET). حالياً يمكنك استخدام خيار النسخة الاحتياطية المشفرة أعلاه.");
+      }
+    } catch {
+      setDriveNote("تعذر التحقق من حالة الربط مع السحابة. تأكد من تشغيل الخدمة الخلفية.");
+    }
+  };
+
+  const openFilePicker = (category: string) => {
+    pendingCategoryRef.current = category;
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-selecting the same file
+    if (!selected.length) return;
+    setIsUploading(true);
+    setUploadError(null);
+    let failed = 0;
+    for (const file of selected) {
+      try {
+        await uploadFile(file, { category: pendingCategoryRef.current, caseId: getCaseId() });
+      } catch (error) {
+        failed++;
+        if (error instanceof Error) setUploadError(error.message);
+      }
+    }
+    await refreshFiles();
+    if (failed === 0 && selected.length > 0) {
+      setUploadError(null);
+    }
+    setIsUploading(false);
+  };
+
+  const filesForCategory = (category: string): EvidenceFile[] =>
+    files.filter(f => f.category === category);
+
+  const documentStatus = (category: string): { status: string; uploaded: boolean; actionText: string } => {
+    const count = filesForCategory(category).length;
+    if (count > 0) {
+      return { status: `تم رفع ${count} ${count === 1 ? "ملف" : "ملفات"}`, uploaded: true, actionText: "عرض وإضافة" };
+    }
+    if (category === "ids") return { status: "مطلوب للمطالبة", uploaded: false, actionText: "إضافة ملف" };
+    return { status: "لم يتم الرفع بعد", uploaded: false, actionText: "إضافة ملف" };
+  };
+
+  const filteredDocuments = MOCK_DOCUMENTS.filter(doc => {
+    const { status } = documentStatus(doc.category);
+    return (
+      doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      status.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  });
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
@@ -150,6 +316,15 @@ export default function EvidenceOrganizer() {
           <p className="text-slate-600">احتفظ بجميع وثائقك الطبية والقانونية وسجل تواصلك مع شركة التأمين في مكان واحد آمن.</p>
         </div>
         <div className="flex gap-3 shrink-0 w-full md:w-auto flex-wrap">
+          {/* Hidden real file input — the visible buttons trigger it */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="application/pdf,image/*"
+            className="hidden"
+            onChange={handleFilesSelected}
+          />
           <button 
             onClick={() => setIsBackupModalOpen(true)}
             className="flex-1 md:flex-none flex items-center justify-center px-4 py-2.5 bg-white border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors"
@@ -186,9 +361,22 @@ export default function EvidenceOrganizer() {
             <Scan className="w-5 h-5 ml-2" />
             مسح ضوئي
           </button>
-          <button className="flex-1 md:flex-none flex items-center justify-center px-6 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors">
-            <UploadCloud className="w-5 h-5 ml-2" />
-            رفع ملف
+          <button 
+            onClick={() => openFilePicker("misc")}
+            disabled={isUploading}
+            className="flex-1 md:flex-none flex items-center justify-center px-6 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-70"
+          >
+            {isUploading ? (
+              <>
+                <div className="w-5 h-5 ml-2 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
+                جاري الرفع...
+              </>
+            ) : (
+              <>
+                <UploadCloud className="w-5 h-5 ml-2" />
+                رفع ملف
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -233,20 +421,30 @@ export default function EvidenceOrganizer() {
           </div>
 
           {/* Document Cards */}
+          {uploadError && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm leading-relaxed">
+              {uploadError}
+            </div>
+          )}
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredDocuments.length > 0 ? (
-              filteredDocuments.map((doc) => (
-                <div key={doc.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center space-y-4 hover:border-emerald-200 cursor-pointer transition-colors group">
+              filteredDocuments.map((doc) => {
+                const { status, uploaded, actionText } = documentStatus(doc.category);
+                return (
+                <div key={doc.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center space-y-4 hover:border-emerald-200 cursor-pointer transition-colors group"
+                  onClick={() => openFilePicker(doc.category)}
+                >
                   <div className={cn("w-16 h-16 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform", doc.colorClasses.bg, doc.colorClasses.textIcon)}>
                     <doc.icon className="w-8 h-8" />
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-900">{doc.title}</h3>
-                    <p className={cn("text-sm mt-1", doc.status.includes('تم رفع') ? 'text-emerald-600' : 'text-slate-500')}>{doc.status}</p>
+                    <p className={cn("text-sm mt-1", uploaded ? 'text-emerald-600' : 'text-slate-500')}>{status}</p>
                   </div>
-                  <button className={cn("text-sm font-medium", doc.colorClasses.textAction)}>{doc.actionText}</button>
+                  <button className={cn("text-sm font-medium", doc.colorClasses.textAction)}>{actionText}</button>
                 </div>
-              ))
+                );
+              })
             ) : (
               <div className="col-span-full py-12 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100 border-dashed">
                 لا توجد نتائج مطابقة لبحثك عن "{searchQuery}".
@@ -261,41 +459,94 @@ export default function EvidenceOrganizer() {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in">
           <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
             <h3 className="font-bold text-slate-800">التسلسل الزمني للمطالبة</h3>
-            <button className="flex items-center text-sm text-emerald-600 font-medium hover:text-emerald-700">
+            <button 
+              onClick={() => setShowEventForm(!showEventForm)}
+              className="flex items-center text-sm text-emerald-600 font-medium hover:text-emerald-700"
+            >
               <Plus className="w-4 h-4 ml-1" />
-              إضافة حدث جديد
+              {showEventForm ? 'إلغاء' : 'إضافة حدث جديد'}
             </button>
           </div>
+
+          {showEventForm && (
+            <div className="p-6 border-b border-slate-100 bg-slate-50/50 animate-in fade-in slide-in-from-top-2">
+              <div className="space-y-3">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    value={newEvent.title}
+                    onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
+                    placeholder="عنوان الحدث (مثال: اتصال بشركة التأمين)"
+                    className="w-full rounded-lg border border-slate-200 p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white"
+                  />
+                  <input
+                    type="date"
+                    value={newEvent.date}
+                    onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
+                    className="w-full rounded-lg border border-slate-200 p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white text-slate-600"
+                  />
+                </div>
+                <textarea
+                  rows={3}
+                  value={newEvent.description}
+                  onChange={(e) => setNewEvent({ ...newEvent, description: e.target.value })}
+                  placeholder="تفاصيل الحدث وما تم الاتفاق عليه..."
+                  className="w-full rounded-lg border border-slate-200 p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white"
+                />
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={newEvent.flag}
+                      onChange={(e) => setNewEvent({ ...newEvent, flag: e.target.checked })}
+                      className="accent-amber-500 w-4 h-4"
+                    />
+                    تمييز كعلامة خطر (مماطلة/بخس)
+                  </label>
+                  <button
+                    onClick={addLogEvent}
+                    disabled={!newEvent.title.trim() || !newEvent.description.trim()}
+                    className="px-6 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    حفظ الحدث
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="p-6">
             <div className="relative border-r-2 border-slate-200 pr-6 space-y-8">
-              {/* Event 1 */}
-              <div className="relative">
-                <div className="absolute -right-[31px] top-1 w-4 h-4 rounded-full bg-slate-300 border-4 border-white"></div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                  <h4 className="font-bold text-slate-900">مراجعة شركة التأمين الأولى</h4>
-                  <span className="flex items-center text-xs text-slate-500 font-medium">
-                    <Clock className="w-3 h-3 ml-1" />
-                    2026-08-10
-                  </span>
+              {logEvents.map((event) => (
+                <div key={event.id} className="relative group">
+                  <div className={cn("absolute -right-[31px] top-1 w-4 h-4 rounded-full border-4 border-white", event.flag ? "bg-amber-500" : "bg-emerald-500")}></div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
+                    <h4 className="font-bold text-slate-900">{event.title}</h4>
+                    <span className="flex items-center text-xs text-slate-500 font-medium">
+                      <Clock className="w-3 h-3 ml-1" />
+                      {event.date}
+                      <button
+                        onClick={() => removeLogEvent(event.id)}
+                        className="mr-2 text-slate-300 hover:text-rose-500 transition-colors"
+                        title="حذف الحدث"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600">{event.description}</p>
+                  {event.flag && (
+                    <div className="mt-2 inline-flex items-center px-2 py-1 rounded bg-amber-50 text-amber-700 text-xs font-medium border border-amber-200">
+                      ⚠️ علامة خطر: مماطلة وعرض بخس
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-slate-600">تم تقديم الكروكا ورخصة القيادة وتم فتح ملف مطالبة برقم #4592.</p>
-              </div>
-
-              {/* Event 2 */}
-              <div className="relative">
-                <div className="absolute -right-[31px] top-1 w-4 h-4 rounded-full bg-emerald-500 border-4 border-white"></div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2">
-                  <h4 className="font-bold text-slate-900">عرض تسوية مبدئي</h4>
-                  <span className="flex items-center text-xs text-slate-500 font-medium">
-                    <Clock className="w-3 h-3 ml-1" />
-                    2026-08-15
-                  </span>
+              ))}
+              {logEvents.length === 0 && (
+                <div className="py-8 text-center text-slate-400 text-sm">
+                  لم يتم تسجيل أي أحداث بعد. اضغط "إضافة حدث جديد" لتوثيق تواصلك مع شركة التأمين.
                 </div>
-                <p className="text-sm text-slate-600">اتصل موظف التعويضات وعرض مبلغ 300 دينار. تم رفض العرض لأنه لا يغطي نصف الفواتير الطبية.</p>
-                <div className="mt-2 inline-flex items-center px-2 py-1 rounded bg-amber-50 text-amber-700 text-xs font-medium border border-amber-200">
-                  ⚠️ علامة خطر: مماطلة وعرض بخس
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
@@ -331,11 +582,11 @@ export default function EvidenceOrganizer() {
                     </div>
                     <div className="flex-1">
                       <h4 className="font-bold text-slate-900 flex items-center gap-2">
-                        تحميل نسخة احتياطية (ملف مشفر)
+                        تحميل نسخة احتياطية (ملف JSON)
                         <Lock className="w-4 h-4 text-slate-400" />
                       </h4>
                       <p className="text-sm text-slate-500 mt-1 mb-4 leading-relaxed">
-                        تنزيل ملف بصيغة (haqqi.) يحتوي على جميع بياناتك مرفقة بتشفير آمن للاحتفاظ به على جهازك الشخصي.
+                        تنزيل ملف يحتوي على جميع بياناتك ومستنداتك المسجلة للاحتفاظ به على جهازك الشخصي وإمكانية استعادته لاحقاً.
                       </p>
                       <button 
                         onClick={handleDownloadBackup}
@@ -345,12 +596,12 @@ export default function EvidenceOrganizer() {
                         {isDownloadingBackup ? (
                           <span className="flex items-center">
                             <div className="w-4 h-4 ml-2 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div> 
-                            جاري التجهيز والتشفير...
+                            جاري التجهيز...
                           </span>
                         ) : (
                           <span className="flex items-center">
                             <Download className="w-4 h-4 ml-2" /> 
-                            تحميل الملف المشفر
+                            تحميل ملف النسخة الاحتياطية
                           </span>
                         )}
                       </button>
@@ -372,25 +623,18 @@ export default function EvidenceOrganizer() {
                         مزامنة تلقائية لمستنداتك الطبية والقانونية مباشرة إلى حسابك في جوجل درايف للحصول على وصول دائم.
                       </p>
                       <button 
-                        onClick={() => setIsCloudConnected(!isCloudConnected)}
-                        className={cn(
-                          "w-full sm:w-auto px-5 py-2.5 font-medium rounded-lg transition-colors flex items-center justify-center",
-                          isCloudConnected 
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100" 
-                            : "bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
-                        )}
+                        onClick={handleDriveToggle}
+                        className="w-full sm:w-auto px-5 py-2.5 font-medium rounded-lg transition-colors flex items-center justify-center bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
                       >
-                        {isCloudConnected ? (
-                          <span className="flex items-center">
-                            <CheckCircle2 className="w-4 h-4 ml-2" /> 
-                            تم الربط والمزامنة بنجاح
-                          </span>
-                        ) : (
-                          <span className="flex items-center">
-                            ربط الحساب الآن
-                          </span>
-                        )}
+                        <span className="flex items-center">
+                          ربط الحساب الآن
+                        </span>
                       </button>
+                      {driveNote && (
+                        <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
+                          {driveNote}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>

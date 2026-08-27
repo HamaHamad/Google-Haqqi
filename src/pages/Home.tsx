@@ -1,13 +1,38 @@
 import { useState, useRef, useEffect } from "react";
+import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ShieldCheck, Activity, BookOpen, AlertCircle, BellRing, Clock, FileWarning, MessageCircle, X, Send, Bot, User, ChevronDown, Library, ClipboardList, CheckCircle2, Circle, FolderDown, Share2, Link as LinkIcon, Copy, Mail, Smartphone } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Activity, BookOpen, AlertCircle, BellRing, Clock, FileWarning, MessageCircle, X, Send, Bot, User, ChevronDown, Library, ClipboardList, CheckCircle2, Circle, FolderDown, Share2, Link as LinkIcon, Copy, Mail, Smartphone, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { loadJSON, saveJSON } from "../lib/storage";
+import { api } from "../lib/api";
+import { getCasePayload } from "../lib/caseStore";
+import { buildDossierHtml, exportMarkupToPdf } from "../lib/pdf";
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
 }
+
+const CHAT_ERROR = "عذراً، حدث خطأ أثناء معالجة طلبك. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.";
+
+// Static class maps — Tailwind cannot compile interpolated class names like `bg-${color}-50`
+const ALERT_STYLES: Record<string, { container: string; iconWrap: string; title: string; body: string; action: string }> = {
+  rose: {
+    container: "bg-rose-50 border border-rose-200",
+    iconWrap: "bg-rose-100 text-rose-600",
+    title: "text-rose-900",
+    body: "text-rose-800",
+    action: "bg-white border border-rose-200 text-rose-700 hover:bg-rose-100",
+  },
+  amber: {
+    container: "bg-amber-50 border border-amber-200",
+    iconWrap: "bg-amber-100 text-amber-600",
+    title: "text-amber-900",
+    body: "text-amber-800",
+    action: "bg-white border border-amber-200 text-amber-700 hover:bg-amber-100",
+  },
+};
 
 const LEGAL_TERMS = [
   {
@@ -37,15 +62,7 @@ const LEGAL_TERMS = [
   }
 ];
 
-export default function Home() {
-  const [activeTermId, setActiveTermId] = useState<number | null>(null);
-  
-  // Share Modal State
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [isLinkCopied, setIsLinkCopied] = useState(false);
-
-  // Interactive To-Do List State
-  const [tasks, setTasks] = useState([
+const DEFAULT_TASKS = [
     {
       id: 1,
       title: "مراجعة المستشفى للحصول على التقرير الطبي الأولي",
@@ -70,7 +87,32 @@ export default function Home() {
       description: "بعد استقرار الحالة (الشفاء التام من الإصابة الأولية)، يجب تقييم نسبة العجز الوظيفي إن وجد بواسطة لجنة طبية قطعية.",
       completed: false,
     }
-  ]);
+  ];
+
+export default function Home() {
+  const [activeTermId, setActiveTermId] = useState<number | null>(null);
+
+  // Share Modal State
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isShareLoading, setIsShareLoading] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  // Dossier export state
+  const [isExportingDossier, setIsExportingDossier] = useState(false);
+
+  // Interactive To-Do List State (persisted)
+  const [tasks, setTasks] = useState(DEFAULT_TASKS.map(t => ({ ...t })));
+  
+  useEffect(() => {
+    const saved = loadJSON<typeof DEFAULT_TASKS>("haqqi_tasks", []);
+    if (saved.length) setTasks(saved);
+  }, []);
+  
+  useEffect(() => {
+    saveJSON("haqqi_tasks", tasks);
+  }, [tasks]);
 
   const toggleTask = (id: number) => {
     setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
@@ -85,7 +127,47 @@ export default function Home() {
     }
   ]);
   const [chatInput, setChatInput] = useState("");
+
+  const handleExportDossier = async () => {
+    setIsExportingDossier(true);
+    try {
+      // Fetch real evidence list from the server to include in the dossier
+      let evidenceFiles: Array<{ originalname: string; uploadedAt: string; category: string }> = [];
+      try {
+        const res = await api<{ files: Array<{ originalname: string; uploadedAt: string; category: string }> }>("/api/evidence/files");
+        evidenceFiles = res.files || [];
+      } catch {
+        // evidence list unavailable — export proceeds with local data only
+      }
+      const payload = { ...getCasePayload(), evidenceFiles };
+      await exportMarkupToPdf(buildDossierHtml(payload), `haqqi-dossier-${payload.caseId}.pdf`);
+    } catch (error) {
+      console.error("Dossier export failed:", error);
+      alert("تعذر إنشاء ملف PDF. يرجى المحاولة مرة أخرى.");
+    } finally {
+      setIsExportingDossier(false);
+    }
+  };
+
   const [isChatLoading, setIsChatLoading] = useState(false);
+
+  const handleOpenShare = async () => {
+    setIsShareModalOpen(true);
+    setIsShareLoading(true);
+    setShareError(null);
+    setShareUrl(null);
+    try {
+      const payload = getCasePayload();
+      const res = await api<{ url: string; token: string }>("/api/share", {
+        json: { caseId: payload.caseId, payload },
+      });
+      setShareUrl(res.url);
+    } catch {
+      setShareError("تعذر إنشاء رابط المشاركة. تأكد من تشغيل الخدمة الخلفية وحاول مرة أخرى.");
+    } finally {
+      setIsShareLoading(false);
+    }
+  };
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -98,7 +180,7 @@ export default function Home() {
     }
   }, [chatMessages, isChatOpen]);
 
-  const handleSendChat = async (e: React.FormEvent) => {
+  const handleSendChat = async (e: FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || isChatLoading) return;
 
@@ -113,20 +195,24 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMsg.content,
-          history: chatMessages
+          history: chatMessages.map(({ role, content }) => ({ role, content }))
         })
       });
 
-      const data = await response.json();
-      if (data.text) {
-        setChatMessages(prev => [...prev, {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: data.text
-        }]);
-      }
+      const data = await response.json().catch(() => ({}));
+      const text = response.ok ? data.text : null;
+      setChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: text || (data?.error ? String(data.error) : CHAT_ERROR)
+      }]);
     } catch (error) {
       console.error("Error in general chat:", error);
+      setChatMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: CHAT_ERROR
+      }]);
     } finally {
       setIsChatLoading(false);
     }
@@ -190,28 +276,31 @@ export default function Home() {
         </div>
         
         <div className="grid gap-4">
-          {MOCK_ALERTS.map((alert) => (
+          {MOCK_ALERTS.map((alert) => {
+            const styles = ALERT_STYLES[alert.color] ?? ALERT_STYLES.rose;
+            return (
             <div 
               key={alert.id} 
-              className={`bg-${alert.color}-50 border border-${alert.color}-200 p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}
+              className={`${styles.container} p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}
             >
               <div className="flex items-start gap-4">
-                <div className={`p-3 bg-${alert.color}-100 text-${alert.color}-600 rounded-xl shrink-0`}>
+                <div className={`p-3 ${styles.iconWrap} rounded-xl shrink-0`}>
                   <alert.icon className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className={`font-bold text-${alert.color}-900 text-lg`}>{alert.title}</h3>
-                  <p className={`text-${alert.color}-800 mt-1 leading-relaxed`}>{alert.message}</p>
+                  <h3 className={`${styles.title} font-bold text-lg`}>{alert.title}</h3>
+                  <p className={`${styles.body} mt-1 leading-relaxed`}>{alert.message}</p>
                 </div>
               </div>
               <Link
                 to={alert.actionLink}
-                className={`shrink-0 w-full sm:w-auto px-6 py-2.5 bg-white border border-${alert.color}-200 text-${alert.color}-700 text-sm font-bold rounded-lg hover:bg-${alert.color}-100 transition-colors text-center`}
+                className={`${styles.action} shrink-0 w-full sm:w-auto px-6 py-2.5 text-sm font-bold rounded-lg transition-colors text-center`}
               >
                 {alert.actionText}
               </Link>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -296,17 +385,25 @@ export default function Home() {
             
             <div className="shrink-0 w-full md:w-auto flex flex-col gap-3">
               <button 
-                className="w-full md:w-auto px-8 py-4 bg-white text-indigo-900 font-bold rounded-xl hover:bg-indigo-50 transition-colors shadow-sm flex items-center justify-center gap-3 text-lg group"
-                onClick={() => {
-                  alert("سيتم الآن إنشاء وتجميع ملف القضية الشامل بصيغة PDF...");
-                }}
+                className="w-full md:w-auto px-8 py-4 bg-white text-indigo-900 font-bold rounded-xl hover:bg-indigo-50 transition-colors shadow-sm flex items-center justify-center gap-3 text-lg group disabled:opacity-70"
+                onClick={handleExportDossier}
+                disabled={isExportingDossier}
               >
-                تصدير الملف الآن
-                <FolderDown className="w-5 h-5 text-indigo-500 group-hover:-translate-y-1 transition-transform" />
+                {isExportingDossier ? (
+                  <>
+                    <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
+                    جاري تجهيز الملف...
+                  </>
+                ) : (
+                  <>
+                    تصدير الملف الآن
+                    <FolderDown className="w-5 h-5 text-indigo-500 group-hover:-translate-y-1 transition-transform" />
+                  </>
+                )}
               </button>
               <button 
                 className="w-full md:w-auto px-8 py-3 bg-indigo-800 text-indigo-100 font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm flex items-center justify-center gap-3 border border-indigo-700/50"
-                onClick={() => setIsShareModalOpen(true)}
+                onClick={handleOpenShare}
               >
                 مشاركة الملف بأمان
                 <Share2 className="w-4 h-4 text-indigo-300" />
@@ -368,7 +465,7 @@ export default function Home() {
 
       {/* Features Grid */}
       <section className="grid md:grid-cols-3 gap-8 pb-12">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
+        <Link to="/calculator" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4 block hover:border-emerald-200 transition-colors">
           <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mb-4">
             <Activity className="w-6 h-6" />
           </div>
@@ -376,8 +473,8 @@ export default function Home() {
           <p className="text-slate-600">
             أجب على أسئلة بسيطة لمعرفة أنواع التعويضات التي يحق لك المطالبة بها وفقاً للقانون الأردني.
           </p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
+        </Link>
+        <Link to="/workflow" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4 block hover:border-emerald-200 transition-colors">
           <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mb-4">
             <BookOpen className="w-6 h-6" />
           </div>
@@ -385,8 +482,8 @@ export default function Home() {
           <p className="text-slate-600">
             قائمة مهام واضحة لكل ما تحتاجه من تقرير الشرطة، الفحوصات الطبية، وحتى تقديم المطالبة لشركة التأمين.
           </p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
+        </Link>
+        <Link to="/complaints" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4 block hover:border-emerald-200 transition-colors">
           <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-lg flex items-center justify-center mb-4">
             <ShieldCheck className="w-6 h-6" />
           </div>
@@ -394,7 +491,7 @@ export default function Home() {
           <p className="text-slate-600">
             نماذج جاهزة لتقديم شكاوى للبنك المركزي في حال ماطلت شركة التأمين، وتوعية بمخاطر التنازل عن حقك.
           </p>
-        </div>
+        </Link>
       </section>
 
       {/* Disclaimer */}
@@ -508,49 +605,64 @@ export default function Home() {
             </div>
             
             <div className="p-6 space-y-6">
-              <p className="text-slate-600 text-sm leading-relaxed">
-                تم إنشاء رابط آمن ومشفر لملف قضيتك الشامل. يمكنك إرساله مباشرة إلى محاميك أو الجهات المختصة للاطلاع عليه.
-              </p>
-
-              <div className="flex items-center gap-2 p-1.5 border border-slate-200 rounded-xl bg-slate-50">
-                <div className="p-2 text-slate-400 bg-white rounded-lg border border-slate-100 shadow-sm">
-                  <LinkIcon className="w-4 h-4" />
+              {isShareLoading && (
+                <div className="flex items-center justify-center gap-2 py-8 text-slate-500 text-sm font-medium">
+                  <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+                  جاري إنشاء رابط مشاركة آمن لملفك...
                 </div>
-                <input 
-                  readOnly 
-                  value="https://haqqi.jo/secure/doc/a8x9f2" 
-                  className="flex-1 bg-transparent text-sm text-slate-600 focus:outline-none" dir="ltr" 
-                />
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText("https://haqqi.jo/secure/doc/a8x9f2");
-                    setIsLinkCopied(true);
-                    setTimeout(() => setIsLinkCopied(false), 2000);
-                  }}
-                  className={cn("px-3 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5", isLinkCopied ? "bg-emerald-100 text-emerald-700" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")}
-                >
-                  {isLinkCopied ? <><CheckCircle2 className="w-4 h-4" /> تم النسخ</> : <><Copy className="w-4 h-4" /> نسخ</>}
-                </button>
-              </div>
+              )}
+              {shareError && !isShareLoading && (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm leading-relaxed">
+                  {shareError}
+                </div>
+              )}
+              {!isShareLoading && !shareError && shareUrl && (
+                <>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    تم إنشاء رابط آمن لملف قضيتك الشامل. يمكنك إرساله مباشرة إلى محاميك أو الجهات المختصة للاطلاع عليه.
+                  </p>
 
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <a 
-                  href="https://wa.me/?text=مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: https://haqqi.jo/secure/doc/a8x9f2" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
-                >
-                  <Smartphone className="w-6 h-6" />
-                  <span className="font-bold text-sm">واتساب</span>
-                </a>
-                <a 
-                  href="mailto:?subject=ملف القضية الشامل&body=مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: https://haqqi.jo/secure/doc/a8x9f2" 
-                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
-                >
-                  <Mail className="w-6 h-6" />
-                  <span className="font-bold text-sm">البريد الإلكتروني</span>
-                </a>
-              </div>
+                  <div className="flex items-center gap-2 p-1.5 border border-slate-200 rounded-xl bg-slate-50">
+                    <div className="p-2 text-slate-400 bg-white rounded-lg border border-slate-100 shadow-sm">
+                      <LinkIcon className="w-4 h-4" />
+                    </div>
+                    <input 
+                      readOnly 
+                      value={shareUrl} 
+                      className="flex-1 bg-transparent text-sm text-slate-600 focus:outline-none" dir="ltr" 
+                    />
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareUrl);
+                        setIsLinkCopied(true);
+                        setTimeout(() => setIsLinkCopied(false), 2000);
+                      }}
+                      className={cn("px-3 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-1.5", isLinkCopied ? "bg-emerald-100 text-emerald-700" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")}
+                    >
+                      {isLinkCopied ? <><CheckCircle2 className="w-4 h-4" /> تم النسخ</> : <><Copy className="w-4 h-4" /> نسخ</>}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <a 
+                      href={`https://wa.me/?text=${encodeURIComponent("مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: " + shareUrl)}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                    >
+                      <Smartphone className="w-6 h-6" />
+                      <span className="font-bold text-sm">واتساب</span>
+                    </a>
+                    <a 
+                      href={`mailto:?subject=${encodeURIComponent("ملف القضية الشامل")}&body=${encodeURIComponent("مرحباً، أشارك معك ملف قضيتي الشامل عبر الرابط الآمن التالي: " + shareUrl)}`} 
+                      className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                    >
+                      <Mail className="w-6 h-6" />
+                      <span className="font-bold text-sm">البريد الإلكتروني</span>
+                    </a>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

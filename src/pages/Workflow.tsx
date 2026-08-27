@@ -1,7 +1,8 @@
 import { CheckCircle2, Circle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "../lib/utils";
 import TimelineChart from "../components/TimelineChart";
+import { loadJSON, saveJSON } from "../lib/storage";
 
 const WORKFLOW_STEPS = [
   {
@@ -43,7 +44,12 @@ const WORKFLOW_STEPS = [
 ];
 
 export default function Workflow() {
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [completedSteps, setCompletedSteps] = useState<number[]>(() => loadJSON<number[]>("haqqi_workflow", []));
+
+  // Persist progress so the user never loses their checklist on refresh
+  useEffect(() => {
+    saveJSON("haqqi_workflow", completedSteps);
+  }, [completedSteps]);
 
   const toggleStep = (id: number) => {
     setCompletedSteps(prev => 

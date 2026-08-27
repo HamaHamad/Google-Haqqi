@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from "react";
+import type { FormEvent } from "react";
 import { Send, Bot, User, ShieldAlert } from "lucide-react";
 import { cn } from "../lib/utils";
+import { loadJSON, saveJSON } from "../lib/storage";
+import { KEYS } from "../lib/caseStore";
 
 interface Message {
   id: string;
@@ -8,14 +11,19 @@ interface Message {
   content: string;
 }
 
+const INITIAL_MESSAGE: Message = {
+  id: '1',
+  role: 'assistant',
+  content: "مرحباً بك في منصة حقي. أنا المساعد الذكي، سأقوم بجمع تفاصيل الحادث منك خطوة بخطوة لمساعدتك في فهم حقوقك وتجهيز ملف المطالبة. هل أنت بأمان الآن وهل هناك أية إصابات تستدعي تدخلاً طبياً طارئاً؟"
+};
+
+const ERROR_MESSAGE = "عذراً، حدث خطأ في الاتصال بالخدمة. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.";
+
 export default function AiIntake() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "مرحباً بك في منصة حقي. أنا المساعد الذكي، سأقوم بجمع تفاصيل الحادث منك خطوة بخطوة لمساعدتك في فهم حقوقك وتجهيز ملف المطالبة. هل أنت بأمان الآن وهل هناك أية إصابات تستدعي تدخلاً طبياً طارئاً؟"
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = loadJSON<Message[]>(KEYS.intake, []);
+    return saved.length ? saved : [INITIAL_MESSAGE];
+  });
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -28,7 +36,12 @@ export default function AiIntake() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Persist the intake conversation so it survives refreshes and feeds drafting
+  useEffect(() => {
+    saveJSON(KEYS.intake, messages);
+  }, [messages]);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
@@ -43,20 +56,24 @@ export default function AiIntake() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMessage.content,
-          history: messages
+          history: messages.map(({ role, content }) => ({ role, content }))
         })
       });
 
-      const data = await response.json();
-      if (data.text) {
-        setMessages(prev => [...prev, {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: data.text
-        }]);
-      }
+      const data = await response.json().catch(() => ({}));
+      const text = response.ok ? data.text : null;
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: text || (data?.error ? String(data.error) : ERROR_MESSAGE)
+      }]);
     } catch (error) {
       console.error("Error calling AI API:", error);
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: ERROR_MESSAGE
+      }]);
     } finally {
       setIsLoading(false);
     }

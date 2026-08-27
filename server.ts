@@ -1,148 +1,101 @@
+/**
+ * Haqqi — Express server.
+ *
+ * Fixes over the previous version:
+ *  - SPA fallback now uses Express 4 syntax (`app.get('*')` instead of the
+ *    Express 5-only `app.get('*all')`), so deep links work in production.
+ *  - Production static serving no longer depends on NODE_ENV being set in the
+ *    shell: `npm start` sets it via cross-env, and the server also auto-detects
+ *    a built `dist/` when NODE_ENV is unset.
+ *  - Added helmet (security headers), rate limiting, body size limits,
+ *    GEMINI_API_KEY startup warning, and JSON 404s for unknown API routes.
+ */
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { router as apiRouter } from "./server/routes";
+import { isAiConfigured } from "./server/ai";
 
 dotenv.config();
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const PORT = Number.parseInt(process.env.PORT || "3000", 10);
+const distPath = path.join(process.cwd(), "dist");
+const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+const isProduction =
+  process.env.NODE_ENV === "production" || (!process.env.NODE_ENV && hasDist);
+
+if (!isAiConfigured()) {
+  console.warn(
+    "[haqqi] WARNING: GEMINI_API_KEY is not set — AI endpoints will return 503. Copy .env.example to .env and configure it."
+  );
+}
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "عدد كبير من الطلبات، يرجى المحاولة بعد قليل." },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "عدد كبير من طلبات الذكاء الاصطناعي، يرجى المحاولة بعد قليل." },
+});
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
 
-  app.use(express.json());
+  app.use(
+    helmet({
+      // Google Fonts + Vite dev inline styles require relaxed CSP.
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    })
+  );
+  app.use(express.json({ limit: "12mb" })); // base64 evidence uploads can be a few MB
 
-  // API Routes
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
+  // API (rate limited; AI routes stricter)
+  app.use("/api/intake/message", aiLimiter);
+  app.use("/api/chat/general", aiLimiter);
+  app.use("/api/drafts/generate", aiLimiter);
+  app.use("/api", generalLimiter, apiRouter);
 
-  // AI Intake Chat Route
-  app.post("/api/intake/message", async (req, res) => {
-    try {
-      const { message, history } = req.body;
-      
-      const systemInstruction = `You are a helpful, empathetic legal AI assistant for 'Haqqi' in Jordan. 
-Your goal is to guide victims of car accidents through a 7-stage intake process:
-1. Triage & safety (death/injury/threats).
-2. Accident facts (date/time/location, police report).
-3. Losses & damages.
-4. Claims history.
-5. Goals & constraints.
-6. Document collection checklist.
-7. Consent & disclaimers.
-
-Ask ONE question at a time. Be empathetic. Use plain Arabic. Do not offer legal advice, only collect facts and provide structural guidance.`;
-
-      const formattedHistory = history.map((msg: any) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
-      }));
-
-      // Assuming model returns text
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          ...formattedHistory,
-          { role: 'user', parts: [{ text: message }] }
-        ],
-        config: {
-          systemInstruction,
-          temperature: 0.2
-        }
-      });
-
-      res.json({ text: response.text });
-    } catch (error: any) {
-      console.error("AI Intake Error:", error);
-      res.status(500).json({ error: "فشل في معالجة طلبك." });
-    }
-  });
-
-  // Draft Generation Route
-  app.post("/api/drafts/generate", async (req, res) => {
-    try {
-      const { caseData, templateType } = req.body;
-      
-      const prompt = `Generate a legal draft in Arabic for a car accident claim in Jordan.
-Template type: ${templateType}
-Case Data: ${JSON.stringify(caseData)}
-
-Provide the document structure with placeholders for missing information.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-          temperature: 0.1
-        }
-      });
-
-      res.json({ text: response.text });
-    } catch (error) {
-      console.error("Draft Generation Error:", error);
-      res.status(500).json({ error: "فشل في توليد المستند." });
-    }
-  });
-
-  // General Chat Route (Home Page Chatbot)
-  app.post("/api/chat/general", async (req, res) => {
-    try {
-      const { message, history } = req.body;
-      
-      const systemInstruction = `You are a helpful, empathetic legal assistant for the 'Haqqi' platform in Jordan. 
-Your goal is to answer general questions about Jordanian traffic laws, insurance, and compensation. 
-Be concise and use plain Arabic. 
-If applicable, recommend the user to use the specific sections of the Haqqi platform such as:
-- 'Rights Calculator' (حاسبة الحقوق السريعة) for estimating compensation.
-- 'AI Intake' (المساعد الذكي) to document their specific case step-by-step.
-- 'Drafting' (الصياغة القانونية) for generating legal letters.
-Do not provide definitive legal advice; remind them that this is for informational purposes only.`;
-
-      const formattedHistory = history.map((msg: any) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
-      }));
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          ...formattedHistory,
-          { role: 'user', parts: [{ text: message }] }
-        ],
-        config: {
-          systemInstruction,
-          temperature: 0.3
-        }
-      });
-
-      res.json({ text: response.text });
-    } catch (error: any) {
-      console.error("General Chat Error:", error);
-      res.status(500).json({ error: "عذراً، حدث خطأ أثناء معالجة طلبك." });
-    }
-  });
-
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction) {
+    // Development: Vite middleware serves the SPA with HMR.
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    // Production: static assets + Express 4 SPA fallback.
     app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/") || req.path.startsWith("/uploads/")) {
+        next();
+        return;
+      }
+      res.sendFile(path.join(distPath, "index.html"));
     });
+    app.use("/api", (_req, res) => res.status(404).json({ error: "المسار غير موجود." }));
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(
+      `[haqqi] Server running on http://localhost:${PORT} (${isProduction ? "production" : "development"})`
+    );
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("[haqqi] Failed to start server:", error);
+  process.exit(1);
+});

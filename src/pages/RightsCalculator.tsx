@@ -1,45 +1,84 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { loadJSON, saveJSON } from "../lib/storage";
+
+export interface CalculatorForm {
+  role: string;
+  injuries: string;
+  hasMedicalBills: string;
+  hasDisabilityOrDeath: string;
+  otherPartyInsured: string;
+}
+
+export function calculateResults(formData: CalculatorForm): { rights: string[]; advice: string } {
+  const rights = [] as string[];
+  if (formData.injuries === "yes") {
+    rights.push("تعويض عن الأضرار الجسدية (الإصابات)");
+  }
+  if (formData.hasMedicalBills === "yes") {
+    rights.push("تغطية المصاريف الطبية الموثقة (فواتير، مستشفيات)");
+  }
+  if (formData.hasDisabilityOrDeath === "yes") {
+    rights.push("تعويض عن العجز الدائم أو الوفاة (لورثة المتوفى)");
+  }
+
+  let advice = "";
+  if (formData.otherPartyInsured === "no") {
+    advice = "بما أن الطرف الآخر غير مؤمن (أو مجهول)، يحق لك مراجعة (صندوق تعويض المتضررين من حوادث المركبات).";
+  } else {
+    advice = "تقع مسؤولية التعويض على شركة تأمين المركبة المتسببة بالحادث (التأمين الإلزامي/ضد الغير).";
+  }
+  if (formData.role === "مشاة") {
+    advice += " بصفتك من المشاة، أنت طرف ثالث متضرر وتتمتع بأوسع حماية بموجب التأمين الإلزامي للمركبة المتسببة.";
+  } else if (formData.role === "راكب") {
+    advice += " بصفتك راكباً، تعتبر من الغير المتضرر وتشملك تغطية التأمين الإلزامي للمركبة المتسببة بالحادث.";
+  }
+
+  return { rights, advice };
+}
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
+const STEP_FIELDS: Array<keyof CalculatorForm> = [
+  "role",
+  "injuries",
+  "hasMedicalBills",
+  "hasDisabilityOrDeath",
+  "otherPartyInsured",
+];
+
 export default function RightsCalculator() {
-  const [step, setStep] = useState<Step>(1);
-  const [formData, setFormData] = useState({
-    role: "",
-    injuries: "",
-    hasMedicalBills: "",
-    hasDisabilityOrDeath: "",
-    otherPartyInsured: "",
-  });
+  const [step, setStep] = useState<Step>(() => loadJSON<Step>("haqqi_calc_step", 1));
+  const [formData, setFormData] = useState<CalculatorForm>(() =>
+    loadJSON<CalculatorForm>("haqqi_calc_form", {
+      role: "",
+      injuries: "",
+      hasMedicalBills: "",
+      hasDisabilityOrDeath: "",
+      otherPartyInsured: "",
+    })
+  );
+
+  // Persist wizard state so nothing is lost on refresh
+  useEffect(() => {
+    saveJSON("haqqi_calc_step", step);
+    saveJSON("haqqi_calc_form", formData);
+  }, [step, formData]);
+
+  // Persist the final result for the case dossier
+  useEffect(() => {
+    if (step === 5) {
+      saveJSON("haqqi_calculator", calculateResults(formData));
+    }
+  }, [step, formData]);
+
+  const currentAnswered = formData[STEP_FIELDS[step - 1]] !== "";
 
   const handleNext = () => setStep((s) => Math.min(s + 1, 5) as Step);
   const handlePrev = () => setStep((s) => Math.max(s - 1, 1) as Step);
 
-  const calculateResults = () => {
-    const rights = [];
-    if (formData.injuries === "yes") {
-      rights.push("تعويض عن الأضرار الجسدية (الإصابات)");
-    }
-    if (formData.hasMedicalBills === "yes") {
-      rights.push("تغطية المصاريف الطبية الموثقة (فواتير، مستشفيات)");
-    }
-    if (formData.hasDisabilityOrDeath === "yes") {
-      rights.push("تعويض عن العجز الدائم أو الوفاة (لورثة المتوفى)");
-    }
-    
-    let advice = "";
-    if (formData.otherPartyInsured === "no") {
-      advice = "بما أن الطرف الآخر غير مؤمن (أو مجهول)، يحق لك مراجعة (صندوق تعويض المتضررين من حوادث المركبات).";
-    } else {
-      advice = "تقع مسؤولية التعويض على شركة تأمين المركبة المتسببة بالحادث (التأمين الإلزامي/ضد الغير).";
-    }
-
-    return { rights, advice };
-  };
-
-  const results = step === 5 ? calculateResults() : null;
+  const results = step === 5 ? calculateResults(formData) : null;
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -57,7 +96,7 @@ export default function RightsCalculator() {
           ></div>
         </div>
         <div className="flex justify-between text-xs text-slate-500">
-          <span>الخطوة 1 من 5</span>
+          <span>الخطوة {step} من 5</span>
           <span>النتيجة</span>
         </div>
       </div>
@@ -197,7 +236,13 @@ export default function RightsCalculator() {
           {step < 5 && (
             <button
               onClick={handleNext}
-              className="flex items-center px-6 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
+              disabled={!currentAnswered}
+              className={cn(
+                "flex items-center px-6 py-2 text-sm font-medium rounded-lg transition-colors",
+                currentAnswered
+                  ? "text-white bg-emerald-600 hover:bg-emerald-700"
+                  : "text-slate-300 bg-slate-100 cursor-not-allowed"
+              )}
             >
               التالي
               <ArrowLeft className="w-4 h-4 mr-2" />

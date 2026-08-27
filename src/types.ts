@@ -28,3 +28,34 @@ export interface ComplaintContact {
   email: string;
   type: "insurer" | "cbj";
 }
+
+/** Evidence file record returned by GET /api/evidence/files */
+export interface EvidenceFileRecord {
+  id: string;
+  filename: string;
+  originalname: string;
+  mimetype: string;
+  size: number;
+  category: string;
+  caseId: string | null;
+  uploadedAt: string;
+}
+
+/** Contact inquiry submitted via the Complaints page */
+export interface ContactInquiry {
+  id: string;
+  name: string;
+  contact: string;
+  message: string;
+  createdAt: string;
+}
+
+/** Approved community story shown on the Stories page */
+export interface PublishedStory {
+  id: string;
+  date: string;
+  type: "story" | "warning";
+  content: string;
+  tags?: string[];
+  isApproved: boolean;
+}
